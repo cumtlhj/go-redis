@@ -5,7 +5,10 @@ import (
 	"go-redis/interface/tcp"
 	"go-redis/lib/logger"
 	"net"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 )
 
 type Config struct {
@@ -13,7 +16,17 @@ type Config struct {
 }
 
 func ListenAndServerWithSignal(cfg *Config, handler tcp.Handler) error {
+
 	closeChan := make(chan struct{})
+	sigChan := make(chan os.Signal)
+	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-sigChan
+		switch sig {
+		case syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
+			closeChan <- struct{}{}
+		}
+	}()
 	listener, err := net.Listen("tcp", cfg.Address)
 	if err != nil {
 		return err
@@ -24,6 +37,13 @@ func ListenAndServerWithSignal(cfg *Config, handler tcp.Handler) error {
 }
 
 func ListenAndServer(listener net.Listener, handler tcp.Handler, closeChan <-chan struct{}) {
+
+	go func() {
+		<-closeChan
+		logger.Info("shutting down")
+		_ = listener.Close()
+		_ = handler.Close()
+	}()
 	defer func() {
 		_ = listener.Close()
 		_ = handler.Close()
